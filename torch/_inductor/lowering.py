@@ -1999,7 +1999,7 @@ def inductor_randint(
 
 @register_lowering(aten.bucketize, type_promotion_kind=None)
 def bucketize(
-    input: TensorBox,
+    input: Union[TensorBox, Number],
     boundaries: TensorBox,
     *,
     out_int32: bool = False,
@@ -2007,13 +2007,17 @@ def bucketize(
 ):
     assert len(boundaries.get_size()) == 1
 
-    if not (
-        V.graph.has_feature(input, BackendFeature.BUCKETIZE)
-        and V.graph.has_feature(boundaries, BackendFeature.BUCKETIZE)
-    ):
-        return fallback_handler(aten.bucketize.Tensor, add_to_fallback_set=False)(
+    if not (is_triton(input) and is_triton(boundaries)):
+        # Check if input is a number
+        if isinstance(input, Number):
+            return fallback_handler(aten.bucketize.Scalar, add_to_fallback_set=False)(
             input, boundaries, out_int32=out_int32, right=right
-        )
+            )
+        # input is a TensorBox
+        else:
+            return fallback_handler(aten.bucketize.Tensor, add_to_fallback_set=False)(
+            input, boundaries, out_int32=out_int32, right=right
+            )
 
     # The entire boundaries tensor needs to be used by ops.bucketize, so we
     # need to realize it into global memory; or in other words, we can't
@@ -2021,6 +2025,7 @@ def bucketize(
     # we call boundaries.realize().
     boundaries.realize()
     boundaries_size = boundaries.get_size()[0]
+    boundaries_loader = boundaries.make_loader()
     device = input.get_device()
     input_loader = input.make_loader()
 
